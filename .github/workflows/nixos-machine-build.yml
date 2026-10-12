@@ -1,0 +1,41 @@
+# .github/workflows/nixos-machine-build.yml
+#
+# Reusable workflow: build a NixOS system toplevel for a named host. Thin
+# wrapper that nests a call to ./nix-build.yml (same repo, same ref — nesting
+# depth stays at 1). This repo is a library — invoked ONLY via
+# `on: workflow_call`.
+#
+# Consumer example:
+#
+#   jobs:
+#     build-kamrui-h1:
+#       uses: external-systems/actions/.github/workflows/nixos-machine-build.yml@v1
+#       with:
+#         host: kamrui-h1
+#
+# Runner requirements: labels `self-hosted` + `external-systems`.
+name: nixos machine build
+
+on:
+  workflow_call:
+    inputs:
+      host:
+        description: "NixOS configuration name (.#nixosConfigurations.<host>)"
+        type: string
+        required: true
+      runs-on:
+        description: "JSON array of runner labels for the job"
+        type: string
+        default: '["self-hosted", "external-systems"]'
+
+jobs:
+  build:
+    # Fork guard: never let a fork PR reach a self-hosted runner. Do not remove.
+    # (The nested nix-build.yml applies the same guard again — defense in depth.)
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      contents: read
+    uses: ./.github/workflows/nix-build.yml
+    with:
+      installable: .#nixosConfigurations.${{ inputs.host }}.config.system.build.toplevel
+      runs-on: ${{ inputs.runs-on }}
