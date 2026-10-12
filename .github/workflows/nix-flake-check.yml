@@ -1,0 +1,39 @@
+# .github/workflows/nix-flake-check.yml
+#
+# Reusable workflow: run `nix flake check` on an external-systems self-hosted
+# runner. This repo is a library — it is invoked ONLY via `on: workflow_call`
+# from consumer repos and never runs itself (no push/pull_request/dispatch).
+#
+# Consumer example:
+#
+#   jobs:
+#     flake-check:
+#       uses: external-systems/actions/.github/workflows/nix-flake-check.yml@v1
+#
+# Runner requirements: labels `self-hosted` + `external-systems` (nix, git on
+# PATH; nothing is installed by this workflow).
+name: nix flake check
+
+on:
+  workflow_call:
+    inputs:
+      runs-on:
+        description: "JSON array of runner labels for the job"
+        type: string
+        default: '["self-hosted", "external-systems"]'
+      flake-check-flags:
+        description: "Flags passed verbatim to `nix flake check`"
+        type: string
+        default: "--show-trace -L"
+
+jobs:
+  flake-check:
+    # Fork guard: never let a fork PR reach a self-hosted runner. Do not remove.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6.0.2
+      - name: nix flake check
+        run: nix flake check ${{ inputs.flake-check-flags }}
