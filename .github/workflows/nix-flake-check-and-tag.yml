@@ -1,0 +1,71 @@
+# .github/workflows/nix-flake-check-and-tag.yml
+#
+# Reusable workflow: `nix flake check` gates a rolling-semver tag push.
+# Tag format: 0.<rolling-minor>.<commit-count-since-init>. Tagging is
+# idempotent — an existing tag is a no-op. Tag pushes do not retrigger
+# anything (consumers filter on branches; GITHUB_TOKEN pushes emit no events).
+# This repo is a library — invoked ONLY via `on: workflow_call`.
+#
+# Consumer example (external-systems/home is on rolling minor 3):
+#
+#   jobs:
+#     check-and-tag:
+#       uses: external-systems/actions/.github/workflows/nix-flake-check-and-tag.yml@v1
+#       with:
+#         rolling-minor: "3"
+#
+# Runner requirements: labels `self-hosted` + `external-systems`.
+name: nix flake check and tag
+
+on:
+  workflow_call:
+    inputs:
+      runs-on:
+        description: "JSON array of runner labels for the jobs"
+        type: string
+        default: '["self-hosted", "external-systems"]'
+      rolling-minor:
+        description: "Rolling semver minor for this repo (tag = 0.<minor>.<commit-count>)"
+        type: string
+        required: true
+
+jobs:
+  flake-check:
+    # Fork guard: never let a fork PR reach a self-hosted runner. Do not remove.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6.0.2
+      - name: nix flake check
+        run: nix flake check --show-trace -L
+
+  tag:
+    needs: flake-check
+    # Fork guard: never let a fork PR reach a self-hosted runner. Do not remove.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    permissions:
+      contents: write
+    concurrency:
+      # Serialize simultaneous pushes; never cancel a tag push mid-flight.
+      group: ${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v6.0.2
+        with:
+          fetch-depth: 0 # required: the patch number is git history depth
+      - name: Tag rolling semver release
+        run: |
+          set -euo pipefail
+          TAG="0.${{ inputs.rolling-minor }}.$(git rev-list --count HEAD)"
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            echo "Tag $TAG already exists — nothing to do."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "Release $TAG" "$GITHUB_SHA"
+          git push origin "$TAG"
+          echo "Tagged and pushed $TAG"
