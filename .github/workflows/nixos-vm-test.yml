@@ -1,0 +1,70 @@
+# .github/workflows/nixos-vm-test.yml
+#
+# Reusable workflow: run a NixOS VM test via the consumer flake's `vm-test`
+# app (`nix run .#vm-test -- <test>-<size>`). KVM is available on the runner,
+# so tests run at full speed. The step's exit code IS the test result; the
+# job log (streamed via the app) is the test log. In `--driver` mode the app
+# writes artifacts (screenshots, junit.xml, VM state) to
+# /tmp/home-vm-tests/<name> on the runner.
+#
+# VM tests must stay manual-dispatch-only in consumers — never wire this into
+# push/pull_request triggers. This repo is a library — invoked ONLY via
+# `on: workflow_call`.
+#
+# Consumer example:
+#
+#   jobs:
+#     vm-test:
+#       uses: external-systems/actions/.github/workflows/nixos-vm-test.yml@v1
+#       with:
+#         test: my-service
+#         size: sm
+#
+# Runner requirements: labels `self-hosted` + `external-systems`
+# (KVM-enabled; /dev/kvm is passed into the nix build sandbox).
+name: nixos vm test
+
+on:
+  workflow_call:
+    inputs:
+      test:
+        description: "VM test base name (appended with -<size>)"
+        type: string
+        required: true
+      size:
+        description: "Test size variant: sm | md | lg"
+        type: string
+        default: "sm"
+      extra-args:
+        description: "Extra args passed verbatim to the vm-test app (e.g. --driver, --keep-state)"
+        type: string
+        default: ""
+      runs-on:
+        description: "JSON array of runner labels for the job"
+        type: string
+        default: '["self-hosted", "external-systems"]'
+
+jobs:
+  vm-test:
+    # Fork guard: never let a fork PR reach a self-hosted runner. Do not remove.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    permissions:
+      contents: read
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v6.0.2
+      - name: Validate size
+        run: |
+          case "${{ inputs.size }}" in
+            sm|md|lg)
+              echo "size=${{ inputs.size }} OK"
+              ;;
+            *)
+              echo "::error::Invalid size '${{ inputs.size }}'. Valid sizes: sm, md, lg."
+              echo "::error::md/lg are for idle hardware — the runner is a 30 GiB / 8c16t desktop that is in use. Default to sm."
+              exit 1
+              ;;
+          esac
+      - name: Run VM test
+        run: nix run .#vm-test -- "${{ inputs.test }}-${{ inputs.size }}" ${{ inputs.extra-args }}
