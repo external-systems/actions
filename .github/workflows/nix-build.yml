@@ -1,0 +1,44 @@
+# .github/workflows/nix-build.yml
+#
+# Reusable workflow: build an arbitrary flake installable on an
+# external-systems self-hosted runner. This repo is a library — invoked ONLY
+# via `on: workflow_call`.
+#
+# Consumer example:
+#
+#   jobs:
+#     build:
+#       uses: external-systems/actions/.github/workflows/nix-build.yml@v1
+#       with:
+#         installable: .#packages.x86_64-linux.myPackage
+#
+# Runner requirements: labels `self-hosted` + `external-systems`.
+name: nix build
+
+on:
+  workflow_call:
+    inputs:
+      installable:
+        description: "Flake installable to build (e.g. .#packages.x86_64-linux.foo)"
+        type: string
+        required: true
+      runs-on:
+        description: "JSON array of runner labels for the job"
+        type: string
+        default: '["self-hosted", "external-systems"]'
+      build-flags:
+        description: "Flags passed verbatim to `nix build`"
+        type: string
+        default: "-L"
+
+jobs:
+  build:
+    # Fork guard: never let a fork PR reach a self-hosted runner. Do not remove.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6.0.2
+      - name: nix build
+        run: nix build ${{ inputs.installable }} ${{ inputs.build-flags }}
